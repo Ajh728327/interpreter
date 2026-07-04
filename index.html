@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>미라온 통역 · v0.2</title>
+<title>미라온 통역 · v0.3</title>
 <style>
   :root{
     --paper:#F2F4EF; --surface:#FFFFFF; --ink:#24312B; --ink-soft:#5C6B62; --line:#DDE3DA;
@@ -21,7 +21,9 @@
   [hidden]{display:none!important}
 
   #setup{min-height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:32px 20px;gap:8px}
-  #setup .brand{font-size:15px;letter-spacing:.35em;color:var(--ink-soft);text-transform:uppercase}
+  #setup .brand{font-size:15px;letter-spacing:.35em;color:var(--ink-soft);text-transform:uppercase;display:flex;align-items:center;gap:10px}
+  .verInline{font-family:var(--mono);font-size:11px;letter-spacing:0;color:var(--ink-soft);
+    background:var(--surface);border:1px solid var(--line);border-radius:6px;padding:2px 6px}
   #setup h1{font-size:clamp(30px,6vw,44px);font-weight:600;letter-spacing:-.01em;margin:6px 0 2px}
   #setup .sub{color:var(--ink-soft);font-size:15px;margin-bottom:24px;text-align:center;line-height:1.6}
   .keyBox{width:min(440px,100%);margin-bottom:24px}
@@ -78,7 +80,7 @@
   .bubble.patient .who{color:var(--patient)}
   .lat{font-family:var(--mono);font-size:11.5px;background:var(--paper);border-radius:6px;padding:2px 6px}
   .orig{font-size:14.5px;color:var(--ink-soft);line-height:1.55;margin-bottom:6px}
-  .trans{font-size:21px;font-weight:600;line-height:1.5;letter-spacing:.005em}
+  .trans{font-size:21px;font-weight:600;line-height:1.5;letter-spacing:.005em;min-height:1.4em}
   .backline{margin-top:10px;padding-top:9px;border-top:1px dashed var(--line);
     font-size:13.5px;color:var(--ink-soft);line-height:1.55;}
   .backline .tag{font-weight:700;color:var(--doctor);margin-right:6px;font-size:12px}
@@ -165,7 +167,7 @@
 <body>
 
 <div id="setup">
-  <div class="brand">MIRAON CARE</div>
+  <div class="brand">MIRAON CARE <span class="verInline">v0.3</span></div>
   <h1 class="serif">진료실 통역</h1>
   <p class="sub">태블릿이나 폰을 책상 가운데 두고, 환자분의 언어를 선택하세요.<br>안드로이드·PC는 Chrome 권장.</p>
 
@@ -188,13 +190,13 @@
 <div id="session" hidden>
   <header>
     <span class="title">미라온 통역</span>
-    <span class="ver">v0.2</span>
+    <span class="ver">v0.3</span>
     <span class="badge" id="langBadge"></span>
     <div class="autoWrap" id="autoWrap">
       <div class="switch on" id="autoSwitch"></div>
       <span>자동 턴</span>
     </div>
-    <div id="stats">지연 <b id="latAvg">–</b> · 발화 <b id="uttCount">0</b> · 터치 <b id="touchCount">0</b></div>
+    <div id="stats">첫반응 <b id="latAvg">–</b> · 발화 <b id="uttCount">0</b> · 터치 <b id="touchCount">0</b></div>
     <button id="endBtn">세션 종료</button>
   </header>
 
@@ -248,9 +250,10 @@ const LANGS = {
   id:{ stt:'id-ID', tts:['id'],        name:'인도네시아어', native:'Bahasa Indonesia', flag:'🇮🇩' },
   fil:{stt:'fil-PH',tts:['fil','tl'],  name:'필리핀어',     native:'Filipino',         flag:'🇵🇭' },
 };
+const MODEL_FAST  = 'claude-haiku-4-5-20251001';  /* 실시간 통역: 속도 우선 */
+const MODEL_SMART = 'claude-sonnet-4-6';          /* 요약 카드: 품질 우선 */
 
-/* ───────── 상태 ─────────
-   phase: idle | listening | translating | speaking */
+/* ───────── 상태 (phase: idle|listening|translating|speaking) ───────── */
 const S = {
   lang:null, apiKey:'', auto:true, textMode:false,
   phase:'idle', listening:null,
@@ -309,11 +312,32 @@ function startSession(key){
   $('langBadge').textContent = `한국어 ⇄ ${L.name}`;
   $('patientLangName').textContent = `${L.native} 로 말하기`;
   keepAwake();
+  warmup();  /* 연결 예열 + 키 조기 검증 */
   if (!('webkitSpeechRecognition' in window) && !('SpeechRecognition' in window)) {
     micUnavailable('이 브라우저에는 음성 인식 기능이 없습니다. 안드로이드 Chrome이나 PC Chrome에서 열면 음성이 동작합니다. 우선 텍스트 모드로 시작합니다.');
   }
 }
 $('apiKey').addEventListener('input', () => $('apiKey').classList.remove('bad'));
+
+function apiHeaders(){
+  return {
+    'Content-Type':'application/json',
+    'x-api-key': S.apiKey,
+    'anthropic-version':'2023-06-01',
+    'anthropic-dangerous-direct-browser-access':'true'
+  };
+}
+function warmup(){
+  fetch('https://api.anthropic.com/v1/messages', {
+    method:'POST', headers:apiHeaders(),
+    body: JSON.stringify({ model:MODEL_FAST, max_tokens:1, messages:[{role:'user',content:'ok'}] })
+  }).then(r => {
+    if (r.status === 401 || r.status === 403) {
+      $('banner').hidden = false;
+      $('banner').textContent = '⚠ API 키가 유효하지 않은 것 같습니다 — 새로고침 후 키를 다시 확인해 주세요.';
+    }
+  }).catch(()=>{});
+}
 
 /* ───────── 음성 인식 ───────── */
 function listen(side){
@@ -343,18 +367,18 @@ function listen(side){
       micUnavailable('마이크가 차단되어 있습니다. 주소창 옆 자물쇠(권한)에서 마이크를 허용하고 새로고침하세요. 우선 텍스트 모드로 전환했습니다.');
     } else if (e.error === 'no-speech') {
       noSpeech = true;
-    } /* 'aborted' 등은 조용히 무시 */
+    }
   };
   rec.onend = () => {
-    if (S.rec !== rec) return;           // 이미 다른 듣기로 교체된 경우
+    if (S.rec !== rec) return;
     micUI(side, false); liveText(null); S.rec = null; S.listening = null;
     const text = finalText.trim();
     if (text) { S.retries = 0; handleUtterance(text, side); return; }
     if (S.micBlocked) return;
-    if (noSpeech && S.auto && S.retries < 1) {   // 자동 턴에서 한 번만 재시도
+    if (noSpeech && S.auto && S.retries < 1) {
       S.retries++;
-      setTimeout(() => { if (S.phase === 'idle' || S.phase === 'listening') listen(side); }, 250);
       setPhase('idle');
+      setTimeout(() => { if (S.phase === 'idle') listen(side); }, 250);
       return;
     }
     S.retries = 0;
@@ -391,7 +415,7 @@ function micUnavailable(msg){
   $('hintLeft').textContent = '텍스트 모드 — 입력 후 화자 버튼을 누르세요';
 }
 
-/* ───────── 버튼 탭 (연타 방지 + 상태별 안내) ───────── */
+/* ───────── 버튼 탭 ───────── */
 let lastTap = 0;
 function tapMic(side){
   const now = Date.now();
@@ -403,7 +427,7 @@ function tapMic(side){
   if (S.phase === 'speaking')    { flashHint('음성을 재생 중이에요 — 끝나면 다시 눌러주세요'); return; }
   if (S.phase === 'listening') {
     if (S.listening === side) { stopListen(); flashHint('듣기를 멈췄어요'); }
-    else { stopListen(); listen(side); }   // 반대편 탭 = 화자 전환
+    else { stopListen(); listen(side); }
     return;
   }
   listen(side);
@@ -411,134 +435,13 @@ function tapMic(side){
 $('micDoctor').onclick  = () => tapMic('doctor');
 $('micPatient').onclick = () => tapMic('patient');
 
-/* ───────── 통역 파이프라인 ───────── */
-async function handleUtterance(text, side){
-  setPhase('translating');
-  const L = LANGS[S.lang];
-  const bubble = el('div', `bubble ${side}`);
-  bubble.innerHTML = `
-    <div class="meta"><span class="who">${side==='doctor' ? '원장 → 환자' : '환자 → 원장'}</span></div>
-    <div class="orig">${esc(text)}</div>
-    <div class="pending"><span class="dots"></span> 통역 중</div>`;
-  addBubble(bubble);
-
-  const t0 = performance.now();
-  let out;
-  try { out = await translate(text, side, L); }
-  catch (err) {
-    const msg = err.message === 'auth'
-      ? 'API 키가 유효하지 않습니다. 페이지를 새로고침하고 키를 다시 입력해 주세요.'
-      : '번역 호출에 실패했습니다 — 인터넷 연결과 API 키를 확인해 주세요.';
-    bubble.querySelector('.pending').outerHTML = `<div class="errline">${msg}</div>`;
-    setPhase('idle'); return;
-  }
-  const ms = performance.now() - t0;
-  S.latencies.push(ms); S.utts++; updateStats();
-  S.transcript.push({ side, original:text, translation:out.translation });
-
-  bubble.querySelector('.meta').insertAdjacentHTML('beforeend',
-    `<span class="lat">${(ms/1000).toFixed(1)}s</span>`);
-  let inner = `<div class="trans">${esc(out.translation)}</div>`;
-  if (side === 'doctor' && out.back_translation)
-    inner += `<div class="backline"><span class="tag">역번역</span>${esc(out.back_translation)}</div>`;
-  if (out.note) inner += `<div class="note">${esc(out.note)}</div>`;
-  bubble.querySelector('.pending').outerHTML = inner;
-
-  const ttsLang = side === 'doctor' ? L : { tts:['ko'] };
-
-  if (side === 'doctor' && out.safety) {
-    /* 유일한 확인 스텝 */
-    bubble.classList.add('safety');
-    const bar = el('div','safetyBar',
-      `<span class="txt">복용량·주의 정보 — 역번역 확인 후 전달하세요</span>
-       <button class="deliverBtn">확인했습니다 · 음성 전달 ▶</button>`);
-    bubble.appendChild(bar);
-    scrollStream();
-    setPhase('idle');   // 확인 대기 중에도 조작 가능
-    bar.querySelector('.deliverBtn').onclick = ev => {
-      S.touches++; updateStats();
-      ev.target.disabled = true;
-      setPhase('speaking');
-      speak(out.translation, ttsLang, () => {
-        bar.innerHTML = `<span class="deliveredTag">✓ 전달 완료</span>`;
-        setPhase('idle');
-        autoNext(side);
-      });
-    };
-  } else {
-    setPhase('speaking');
-    speak(out.translation, ttsLang, () => { setPhase('idle'); autoNext(side); });
-  }
-  scrollStream();
-}
-
-function autoNext(lastSide){
-  if (!S.auto || S.textMode || S.micBlocked) return;
-  const next = lastSide === 'doctor' ? 'patient' : 'doctor';
-  setTimeout(() => {
-    if (S.phase !== 'idle') return;       // 사용자가 이미 조작했으면 양보
-    beep(next);
-    setTimeout(() => { if (S.phase === 'idle') listen(next); }, 180);
-  }, 250);
-}
-function addBubble(b){ $('stream').appendChild(b); scrollStream(); }
-function scrollStream(){ const s=$('stream'); s.scrollTop = s.scrollHeight; }
-function updateStats(){
-  const avg = S.latencies.length ? (S.latencies.reduce((a,b)=>a+b,0)/S.latencies.length/1000).toFixed(1)+'s' : '–';
-  $('latAvg').textContent = avg; $('uttCount').textContent = S.utts; $('touchCount').textContent = S.touches;
-}
-
-/* ───────── 번역 (Anthropic API 직접 호출, 20초 타임아웃) ───────── */
-async function callClaude(prompt){
-  const ctl = new AbortController();
-  const to = setTimeout(() => ctl.abort(), 20000);
-  let res;
-  try {
-    res = await fetch('https://api.anthropic.com/v1/messages', {
-      method:'POST',
-      headers:{
-        'Content-Type':'application/json',
-        'x-api-key': S.apiKey,
-        'anthropic-version':'2023-06-01',
-        'anthropic-dangerous-direct-browser-access':'true'
-      },
-      body: JSON.stringify({ model:'claude-sonnet-4-6', max_tokens:1000, messages:[{role:'user',content:prompt}] }),
-      signal: ctl.signal
-    });
-  } finally { clearTimeout(to); }
-  if (res.status === 401 || res.status === 403) throw new Error('auth');
-  if (!res.ok) throw new Error('api');
-  const data = await res.json();
-  const text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
-  const m = text.replace(/```json|```/g,'').match(/\{[\s\S]*\}/);
-  if (!m) throw new Error('parse');
-  return JSON.parse(m[0]);
-}
-
-function translate(text, side, L){
-  const dir = side === 'doctor'
-    ? `한국어 → ${L.name}(${L.native})` : `${L.name} → 한국어`;
-  const backTo = side === 'doctor' ? '한국어' : L.name;
-  const prompt =
-`당신은 한의원 진료실의 의료 통역사입니다. 방향: ${dir}.
-규칙:
-- 환자가 바로 알아듣는 쉬운 일반 의료 표현을 쓴다. 존중하는 말투.
-- 한의학 개념어(어혈, 기허 등)는 개념 그대로 옮기지 말고 실질적 의미를 쉬운 말로 풀어 전달한다. 시술명(침, 뜸, 부항)은 일반적으로 통용되는 표현을 쓴다.
-- 숫자·복용량·횟수·기간은 절대 바꾸거나 생략하지 않는다.
-- 오직 아래 JSON만 출력한다. 다른 텍스트 금지.
-{"translation":"번역문","back_translation":"번역문을 다시 ${backTo}로 옮긴 검증용 문장","safety":(발화에 복용량·복용 방법·횟수·금기·알레르기·부작용·경고가 포함되면 true, 아니면 false),"note":"통역상 모호하거나 원장이 확인해야 할 점이 있으면 한국어 한 줄, 없으면 빈 문자열"}
-발화: ${JSON.stringify(text)}`;
-  return callClaude(prompt);
-}
-
-/* ───────── TTS (완료 신호 유실 대비 워치독 내장) ───────── */
+/* ───────── TTS: 문장 큐 + 워치독 ───────── */
 let voices = [];
 function loadVoices(){ voices = speechSynthesis.getVoices() || []; }
 if ('speechSynthesis' in window) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
 
-function speak(text, L, onend){
+function speakOne(text, L, onend){
   if (!('speechSynthesis' in window)) { onend && onend(); return; }
-  try { speechSynthesis.cancel(); } catch(_){}
   const u = new SpeechSynthesisUtterance(text);
   const norm = v => (v.lang||'').toLowerCase().replace('_','-');
   const v = voices.find(v => L.tts.some(p => norm(v).startsWith(p)));
@@ -551,11 +454,9 @@ function speak(text, L, onend){
       $('banner').textContent = 'ⓘ 이 기기에 해당 언어 음성이 없을 수 있습니다 — 음성이 나오지 않으면 환자분께 화면의 큰 글씨를 보여주세요.';
     }
   }
-  u.rate = 0.95;
+  u.rate = 0.98;
   let finished = false;
-  /* 워치독: onend가 안 와도 글자 수 기준 시간이 지나면 반드시 풀어준다 */
   const guard = setTimeout(done, Math.min(2500 + text.length * 120, 15000));
-  /* Chrome이 재생을 몰래 멈추는 버그 대비 주기적 resume */
   const kick = setInterval(() => { try{ speechSynthesis.resume(); }catch(_){} }, 2500);
   function done(){
     if (finished) return;
@@ -565,6 +466,18 @@ function speak(text, L, onend){
   }
   u.onend = done; u.onerror = done;
   try { speechSynthesis.speak(u); } catch(_) { done(); }
+}
+/* 발화 1건에 대한 문장 큐 — push한 순서대로 이어 말하고, 전부 끝나면 waitIdle 해소 */
+function makeSpeechQueue(L){
+  let pending = 0, resolver = null;
+  return {
+    push(text){
+      const t = text.trim(); if (!t) return;
+      pending++;
+      speakOne(t, L, () => { pending--; if (pending === 0 && resolver) { resolver(); resolver = null; } });
+    },
+    waitIdle(){ return pending === 0 ? Promise.resolve() : new Promise(r => resolver = r); }
+  };
 }
 
 /* 턴 전환 알림음 */
@@ -579,6 +492,215 @@ function beep(side){
     o.connect(g); g.connect(audioCtx.destination);
     o.start(); o.stop(audioCtx.currentTime + .17);
   } catch(_){}
+}
+
+/* ───────── 스트리밍 번역 파이프라인 ─────────
+   응답 프로토콜: 1행 OK|CHECK → 번역문 → ### → 역번역 → (선택) ### → 메모 */
+async function handleUtterance(text, side){
+  setPhase('translating');
+  try { speechSynthesis.cancel(); } catch(_){}
+  const L = LANGS[S.lang];
+  const ttsL = side === 'doctor' ? L : { tts:['ko'] };
+  const queue = makeSpeechQueue(ttsL);
+
+  const bubble = el('div', `bubble ${side}`);
+  bubble.innerHTML = `
+    <div class="meta"><span class="who">${side==='doctor' ? '원장 → 환자' : '환자 → 원장'}</span></div>
+    <div class="orig">${esc(text)}</div>
+    <div class="pending"><span class="dots"></span> 통역 중</div>`;
+  addBubble(bubble);
+
+  const t0 = performance.now();
+  let buf = '', flag = null, safety = false;
+  let transEl = null, backEl = null, noteEl = null;
+  let spokenIdx = 0, tFirst = 0;
+
+  const stripTail = s => s.replace(/\n?#{1,3}$/, '');
+
+  function render(final){
+    const parts = buf.split(/\n###\n?/);
+    let tr = stripTail(parts[0] || '').trim();
+    if (tr && !transEl){
+      tFirst = performance.now() - t0;
+      S.latencies.push(tFirst); S.utts++; updateStats();
+      bubble.querySelector('.meta').insertAdjacentHTML('beforeend',
+        `<span class="lat">${(tFirst/1000).toFixed(1)}s</span>`);
+      transEl = el('div','trans');
+      bubble.querySelector('.pending').replaceWith(transEl);
+    }
+    if (transEl) transEl.textContent = tr;
+    if (parts.length > 1){
+      const bk = stripTail(parts[1] || '').trim();
+      if (bk && side === 'doctor'){
+        if (!backEl){ backEl = el('div','backline','<span class="tag">역번역</span><span class="bt"></span>'); bubble.appendChild(backEl); }
+        backEl.querySelector('.bt').textContent = bk;
+      }
+    }
+    if (parts.length > 2){
+      const nt = stripTail(parts[2] || '').trim();
+      if (nt){
+        if (!noteEl){ noteEl = el('div','note',''); bubble.appendChild(noteEl); }
+        noteEl.textContent = nt;
+      }
+    }
+    /* 문장 단위 즉시 발화 (확인 스텝 대상이면 보류) */
+    if (!safety && tr){
+      const closed = final || parts.length > 1;
+      const re = /[.!?。！？…](?=\s|$)/g; let m, last = -1;
+      while ((m = re.exec(tr))) if (m.index >= spokenIdx) last = m.index + 1;
+      const end = closed ? tr.length : last;
+      if (end > spokenIdx){
+        queue.push(tr.slice(spokenIdx, end));
+        spokenIdx = end;
+      }
+    }
+    scrollStream();
+    return tr;
+  }
+
+  let tr = '';
+  try {
+    await streamClaude(buildPrompt(text, side, L), delta => {
+      buf += delta;
+      if (flag === null){
+        const nl = buf.indexOf('\n');
+        if (nl < 0) return;
+        flag = buf.slice(0, nl).trim();
+        safety = /CHECK/i.test(flag);
+        buf = buf.slice(nl + 1);
+        if (safety) bubble.classList.add('safety');
+      }
+      tr = render(false);
+    });
+    tr = render(true);
+  } catch (err) {
+    const msg = err.message === 'auth'
+      ? 'API 키가 유효하지 않습니다. 페이지를 새로고침하고 키를 다시 입력해 주세요.'
+      : '번역 호출에 실패했습니다 — 인터넷 연결과 API 키를 확인해 주세요.';
+    const p = bubble.querySelector('.pending');
+    if (p) p.outerHTML = `<div class="errline">${msg}</div>`;
+    else bubble.appendChild(el('div','errline',msg));
+    setPhase('idle'); return;
+  }
+
+  if (!tr){
+    const p = bubble.querySelector('.pending');
+    if (p) p.outerHTML = `<div class="errline">번역 결과가 비어 있습니다 — 다시 시도해 주세요.</div>`;
+    setPhase('idle'); return;
+  }
+  S.transcript.push({ side, original:text, translation:tr });
+
+  if (side === 'doctor' && safety){
+    /* 유일한 확인 스텝: 복용량·금기 */
+    const bar = el('div','safetyBar',
+      `<span class="txt">복용량·주의 정보 — 역번역 확인 후 전달하세요</span>
+       <button class="deliverBtn">확인했습니다 · 음성 전달 ▶</button>`);
+    bubble.appendChild(bar);
+    scrollStream();
+    setPhase('idle');
+    bar.querySelector('.deliverBtn').onclick = ev => {
+      S.touches++; updateStats();
+      ev.target.disabled = true;
+      setPhase('speaking');
+      queue.push(tr);
+      queue.waitIdle().then(() => {
+        bar.innerHTML = `<span class="deliveredTag">✓ 전달 완료</span>`;
+        setPhase('idle');
+        autoNext(side);
+      });
+    };
+  } else {
+    setPhase('speaking');
+    await queue.waitIdle();
+    setPhase('idle');
+    autoNext(side);
+  }
+}
+
+function buildPrompt(text, side, L){
+  const dir = side === 'doctor' ? `한국어→${L.name}` : `${L.name}→한국어`;
+  const backTo = side === 'doctor' ? '한국어' : L.name;
+  return `한의원 진료실 통역. 방향: ${dir}. 환자가 바로 알아듣는 쉬운 일반 의료 표현과 존중하는 말투. 한의학 개념어(어혈·기허 등)는 쉬운 의미로 풀고, 시술명(침·뜸·부항)은 통용 표현으로. 숫자·복용량·횟수·기간은 절대 바꾸지 말 것.
+출력 형식(그대로, 설명·기호 추가 금지):
+1행: 복용량·복용법·횟수·금기·알레르기·부작용·경고가 포함되면 CHECK, 아니면 OK
+2행부터: 번역문만
+다음 행에 정확히: ###
+그 다음 행부터: 번역문을 ${backTo}로 되옮긴 검증용 문장
+원장이 확인할 애매한 점이 있을 때만, 그 다음 행에 ### 를 쓰고 다음 행에 한국어 메모 1줄
+발화: ${JSON.stringify(text)}`;
+}
+
+async function streamClaude(prompt, onDelta){
+  const ctl = new AbortController();
+  const to = setTimeout(() => ctl.abort(), 25000);
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST', headers:apiHeaders(),
+      body: JSON.stringify({ model:MODEL_FAST, max_tokens:800, stream:true, messages:[{role:'user',content:prompt}] }),
+      signal: ctl.signal
+    });
+  } catch(e){ clearTimeout(to); throw new Error('api'); }
+  if (res.status === 401 || res.status === 403){ clearTimeout(to); throw new Error('auth'); }
+  if (!res.ok){ clearTimeout(to); throw new Error('api'); }
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let sse = '';
+  try {
+    while (true){
+      const {done, value} = await reader.read();
+      if (done) break;
+      sse += dec.decode(value, {stream:true});
+      let idx;
+      while ((idx = sse.indexOf('\n')) >= 0){
+        const line = sse.slice(0, idx).trim(); sse = sse.slice(idx + 1);
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (!payload || payload === '[DONE]') continue;
+        try {
+          const ev = JSON.parse(payload);
+          if (ev.type === 'content_block_delta' && ev.delta && ev.delta.text) onDelta(ev.delta.text);
+        } catch(_){}
+      }
+    }
+  } finally { clearTimeout(to); }
+}
+
+/* 요약 카드 등 비실시간 호출 (품질 모델, 논스트리밍) */
+async function callClaude(prompt){
+  const ctl = new AbortController();
+  const to = setTimeout(() => ctl.abort(), 30000);
+  let res;
+  try {
+    res = await fetch('https://api.anthropic.com/v1/messages', {
+      method:'POST', headers:apiHeaders(),
+      body: JSON.stringify({ model:MODEL_SMART, max_tokens:1000, messages:[{role:'user',content:prompt}] }),
+      signal: ctl.signal
+    });
+  } finally { clearTimeout(to); }
+  if (res.status === 401 || res.status === 403) throw new Error('auth');
+  if (!res.ok) throw new Error('api');
+  const data = await res.json();
+  const text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('\n');
+  const m = text.replace(/```json|```/g,'').match(/\{[\s\S]*\}/);
+  if (!m) throw new Error('parse');
+  return JSON.parse(m[0]);
+}
+
+function autoNext(lastSide){
+  if (!S.auto || S.textMode || S.micBlocked) return;
+  const next = lastSide === 'doctor' ? 'patient' : 'doctor';
+  setTimeout(() => {
+    if (S.phase !== 'idle') return;
+    beep(next);
+    setTimeout(() => { if (S.phase === 'idle') listen(next); }, 180);
+  }, 250);
+}
+function addBubble(b){ $('stream').appendChild(b); scrollStream(); }
+function scrollStream(){ const s=$('stream'); s.scrollTop = s.scrollHeight; }
+function updateStats(){
+  const avg = S.latencies.length ? (S.latencies.reduce((a,b)=>a+b,0)/S.latencies.length/1000).toFixed(1)+'s' : '–';
+  $('latAvg').textContent = avg; $('uttCount').textContent = S.utts; $('touchCount').textContent = S.touches;
 }
 
 /* ───────── 기타 조작 ───────── */
